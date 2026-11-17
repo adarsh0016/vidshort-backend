@@ -34,4 +34,5 @@ cloudflare:
 gemini:
   api:
     base-url: https://generativelanguage.googleapis.com
+    model: ${GEMINI_VEO_MODEL:veo-3.1-generate-preview}
     default-key: ${GEMINI_API_KEY:}

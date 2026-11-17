@@ -25,14 +25,15 @@ public class GeminiVideoService {
     @Value("${gemini.api.default-key:}")
     private String defaultApiKey;
 
+    @Value("${gemini.api.model:veo-3.1-generate-preview}")
+    private String configuredModel;
+
     public byte[] generateVideo(String prompt, String resolution, int durationSeconds,
                                 List<String> referenceImageUrls, String lastFrameImageUrl, String apiKey) {
         String keyToUse = (apiKey != null && !apiKey.isBlank()) ? apiKey : defaultApiKey;
         if (keyToUse == null || keyToUse.isBlank()) {
             throw new IllegalStateException("Gemini API key is required");
         }
-
-        String initiateUrl = String.format("%s/v1beta/models/veo-2.0-generate-001:predictLongRunning?key=%s", baseUrl, keyToUse);
 
         Map<String, Object> instance = new HashMap<>();
         instance.put("prompt", prompt);
@@ -64,32 +65,57 @@ public class GeminiVideoService {
 
         HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, headers);
 
-        try {
-            log.info("Sending video generation request to Gemini Veo API...");
-            ResponseEntity<String> response = restTemplate.postForEntity(initiateUrl, entity, String.class);
-
-            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
-                JsonNode root = objectMapper.readTree(response.getBody());
-                String operationName = root.path("name").asText();
-
-                if (operationName != null && !operationName.isBlank()) {
-                    return pollVideoOperation(operationName, keyToUse);
-                }
-
-                JsonNode predictions = root.path("predictions");
-                if (predictions.isArray() && !predictions.isEmpty()) {
-                    String videoBase64 = predictions.get(0).path("bytesBase64Encoded").asText();
-                    if (!videoBase64.isBlank()) {
-                        return Base64.getDecoder().decode(videoBase64);
-                    }
-                }
+        List<String> candidateModels = new ArrayList<>();
+        if (configuredModel != null && !configuredModel.isBlank()) {
+            candidateModels.add(configuredModel.trim());
+        }
+        for (String m : List.of("veo-3.1-generate-preview", "veo-2.0-generate-preview", "gemini-omni-1.2-flash", "veo-2.0-generate-001")) {
+            if (!candidateModels.contains(m)) {
+                candidateModels.add(m);
             }
-        } catch (Exception e) {
-            log.error("Failed to generate video with Gemini Veo: {}", e.getMessage(), e);
-            throw new RuntimeException("Veo video generation failed: " + e.getMessage(), e);
         }
 
-        throw new RuntimeException("Could not obtain video bytes from Gemini Veo");
+        Exception lastException = null;
+        for (String model : candidateModels) {
+            String initiateUrl = String.format("%s/v1beta/models/%s:predictLongRunning?key=%s", baseUrl, model, keyToUse);
+            try {
+                log.info("Attempting video generation with model [{}]...", model);
+                ResponseEntity<String> response = restTemplate.postForEntity(initiateUrl, entity, String.class);
+
+                if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
+                    JsonNode root = objectMapper.readTree(response.getBody());
+                    String operationName = root.path("name").asText();
+
+                    if (operationName != null && !operationName.isBlank()) {
+                        return pollVideoOperation(operationName, keyToUse);
+                    }
+
+                    JsonNode predictions = root.path("predictions");
+                    if (predictions.isArray() && !predictions.isEmpty()) {
+                        String videoBase64 = predictions.get(0).path("bytesBase64Encoded").asText();
+                        if (!videoBase64.isBlank()) {
+                            return Base64.getDecoder().decode(videoBase64);
+                        }
+                    }
+                }
+            } catch (org.springframework.web.client.HttpClientErrorException.NotFound ex) {
+                log.warn("Model [{}] returned 404 Not Found, trying next candidate...", model);
+                lastException = ex;
+            } catch (Exception e) {
+                log.error("Failed to generate video with model [{}]: {}", model, e.getMessage());
+                lastException = e;
+                if (!e.getMessage().contains("404")) {
+                    break;
+                }
+            }
+        }
+
+        String errorDetail = lastException != null ? lastException.getMessage() : "Unknown error";
+        if (errorDetail.contains("404") || errorDetail.contains("not found")) {
+            throw new RuntimeException("Veo video generation is not enabled on this Gemini API key. Google requires an approved developer account with Veo/Video Generation preview access in Google AI Studio (https://aistudio.google.com). Response: " + errorDetail);
+        }
+
+        throw new RuntimeException("Veo video generation failed: " + errorDetail, lastException);
     }
 
     private byte[] pollVideoOperation(String operationName, String apiKey) throws InterruptedException {
