@@ -37,6 +37,7 @@ public class GenerationService {
     private final PromptAssemblyService promptAssemblyService;
     private final GeminiVideoService geminiVideoService;
     private final GeminiImageService geminiImageService;
+    private final VideoMotionSynthesizer videoMotionSynthesizer;
     private final R2StorageService r2StorageService;
     private final AuthService authService;
 
@@ -46,6 +47,7 @@ public class GenerationService {
                              PromptAssemblyService promptAssemblyService,
                              GeminiVideoService geminiVideoService,
                              GeminiImageService geminiImageService,
+                             VideoMotionSynthesizer videoMotionSynthesizer,
                              R2StorageService r2StorageService,
                              AuthService authService) {
         this.generationRepository = generationRepository;
@@ -54,6 +56,7 @@ public class GenerationService {
         this.promptAssemblyService = promptAssemblyService;
         this.geminiVideoService = geminiVideoService;
         this.geminiImageService = geminiImageService;
+        this.videoMotionSynthesizer = videoMotionSynthesizer;
         this.r2StorageService = r2StorageService;
         this.authService = authService;
     }
@@ -142,16 +145,38 @@ public class GenerationService {
 
             String geminiApiKey = authService.getDecryptedApiKey(userId, "GEMINI");
 
-            log.info("Generation [{}] sending request to Gemini Veo API...", generationId);
-            byte[] videoBytes = geminiVideoService.generateVideo(
-                    generation.getComposedPrompt(),
-                    project.getResolution(),
-                    scene.getDurationSeconds(),
-                    refImageUrls,
-                    lastFrameUrl,
-                    geminiApiKey
-            );
-            log.info("Generation [{}] received [{}] video bytes from Gemini Veo", generationId, videoBytes.length);
+            byte[] videoBytes = null;
+            try {
+                log.info("Generation [{}] attempting Gemini Veo API...", generationId);
+                videoBytes = geminiVideoService.generateVideo(
+                        generation.getComposedPrompt(),
+                        project.getResolution(),
+                        scene.getDurationSeconds(),
+                        refImageUrls,
+                        lastFrameUrl,
+                        geminiApiKey
+                );
+                log.info("Generation [{}] received [{}] video bytes from Gemini Veo", generationId, videoBytes.length);
+            } catch (Exception veoEx) {
+                log.warn("Generation [{}] Veo API unavailable on key ({}), activating Imagen 3 Motion Video Engine fallback...",
+                        generationId, veoEx.getMessage());
+
+                // 1. Generate high-resolution visual with Imagen 3 (supported on standard Gemini API keys)
+                byte[] imageBytes = geminiImageService.generateImage(generation.getComposedPrompt(), geminiApiKey);
+
+                // 2. Synthesize smooth camera motion MP4 video
+                videoBytes = videoMotionSynthesizer.synthesizeMotionVideo(
+                        imageBytes,
+                        scene.getCameraMovement(),
+                        scene.getDurationSeconds(),
+                        project.getResolution()
+                );
+
+                generation.setModelUsed("imagen-3-motion");
+                generationRepository.save(generation);
+                log.info("Generation [{}] successfully rendered [{}] motion video bytes via Imagen 3 Engine",
+                        generationId, videoBytes.length);
+            }
 
             generation.setStatus("UPLOADING");
             generationRepository.save(generation);
