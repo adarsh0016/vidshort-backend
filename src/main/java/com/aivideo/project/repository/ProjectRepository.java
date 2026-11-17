@@ -1,0 +1,19 @@
+package com.aivideo.project.repository;
+
+import com.aivideo.project.entity.Project;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.stereotype.Repository;
+
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+
+@Repository
+public interface ProjectRepository extends JpaRepository<Project, UUID> {
+    Page<Project> findByUserIdAndIsArchivedFalseOrderByUpdatedAtDesc(UUID userId, Pageable pageable);
+    List<Project> findByUserIdAndIsArchivedFalseOrderByUpdatedAtDesc(UUID userId);
+    Optional<Project> findByIdAndUserId(UUID id, UUID userId);
+    long countByUserIdAndIsArchivedFalse(UUID userId);
+}

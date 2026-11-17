@@ -1,0 +1,35 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: ai-video-backend
+  profiles:
+    active: dev
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+
+logging:
+  config: classpath:logback-spring.xml
+
+# Cloudflare R2 & Gemini & Security configurations
+app:
+  jwt:
+    secret: "404E635266556A586E3272357538782F413F4428472B4B6250645367566B5970"
+    expiration-ms: 86400000 # 24 hours
+  security:
+    encryption-secret: "MySuperSecretKeyForApiEncryption32B"
+
+cloudflare:
+  r2:
+    account-id: ${CF_ACCOUNT_ID:dummy-account-id}
+    access-key: ${CF_ACCESS_KEY:dummy-access-key}
+    secret-key: ${CF_SECRET_KEY:dummy-secret-key}
+    bucket-name: ${CF_R2_BUCKET:ai-video-studio}
+    public-url-prefix: ${CF_R2_PUBLIC_URL:https://assets.yourdomain.com}
+
+gemini:
+  api:
+    base-url: https://generativelanguage.googleapis.com
+    default-key: ${GEMINI_API_KEY:}
